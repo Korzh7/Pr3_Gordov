@@ -11,6 +11,10 @@ using Pr3_Gordov.API.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+});
 
 // Подключаем БД
 builder.Services.AddDbContext<Pr3_GordovContext>();
@@ -121,6 +125,30 @@ app.MapGet("/api/me", (ClaimsPrincipal user) =>
         role = user.FindFirst("role")?.Value
     });
 }).RequireAuthorization();
+
+// === КАТАЛОГ ОДЕЖДЫ И ПОИСК ===
+
+// Получить список всей доступной одежды с размерами
+app.MapGet("/api/clothing", async (Pr3_GordovContext context) =>
+{
+    var clothes = await context.Clothings
+        .Where(c => c.IsAvailable)
+        .Include(c => c.ClothingSizes)
+        .ToListAsync();
+
+    return Results.Ok(clothes);
+});
+
+// Поиск одежды по части названия
+app.MapGet("/api/clothing/search", async (Pr3_GordovContext context, string title) =>
+{
+    var clothes = await context.Clothings
+        .Where(c => c.IsAvailable && c.Title.Contains(title))
+        .Include(c => c.ClothingSizes)
+        .ToListAsync();
+
+    return Results.Ok(clothes);
+});
 
 // === ЗАКАЗЫ (Оформление и просмотр) ===
 
