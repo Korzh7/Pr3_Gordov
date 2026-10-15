@@ -1,6 +1,0 @@
-@Pr3_Gordov.API_HostAddress = http://localhost:5018
-
-GET {{Pr3_Gordov.API_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
