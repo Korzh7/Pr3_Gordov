@@ -16,7 +16,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
 });
 
-// Подключаем БД
+
 builder.Services.AddDbContext<Pr3_GordovContext>();
 
 var key = new SymmetricSecurityKey(
@@ -62,18 +62,15 @@ app.UseAuthorization();
 
 var hasher = new PasswordHasher<User>();
 
-// === Авторизация пользователя ===
+
 app.MapPost("/api/auth/login", async (LoginRequest request, Pr3_GordovContext db) =>
 {
-    var user = await db.Users.FirstOrDefaultAsync(
-        u => u.Login == request.Login);
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Login == request.Login);
 
-    if (user == null ||
-        string.IsNullOrWhiteSpace(request.Password))
+    if (user == null || string.IsNullOrWhiteSpace(request.Password))
         return Results.Challenge();
 
-    var result = hasher.VerifyHashedPassword(
-        user, user.PasswordHash, request.Password);
+    var result = hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
 
     if (result == PasswordVerificationResult.Failed)
         return Results.Challenge();
@@ -85,11 +82,9 @@ app.MapPost("/api/auth/login", async (LoginRequest request, Pr3_GordovContext db
     });
 }).AllowAnonymous();
 
-// === Регистрация нового пользователя ===
 app.MapPost("/api/auth/register", async (RegisterRequest request, Pr3_GordovContext db) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Login) ||
-        string.IsNullOrWhiteSpace(request.Password))
+    if (string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrWhiteSpace(request.Password))
         return Results.BadRequest("Логин и пароль обязательны");
 
     if (await db.Users.AnyAsync(u => u.Login == request.Login))
@@ -115,7 +110,6 @@ app.MapPost("/api/auth/register", async (RegisterRequest request, Pr3_GordovCont
     });
 }).AllowAnonymous();
 
-// === Информация о текущем пользователе ===
 app.MapGet("/api/me", (ClaimsPrincipal user) =>
 {
     return Results.Ok(new
@@ -126,9 +120,7 @@ app.MapGet("/api/me", (ClaimsPrincipal user) =>
     });
 }).RequireAuthorization();
 
-// === КАТАЛОГ ОДЕЖДЫ И ПОИСК ===
 
-// Получить список всей доступной одежды с размерами
 app.MapGet("/api/clothing", async (Pr3_GordovContext context) =>
 {
     var clothes = await context.Clothings
@@ -139,7 +131,6 @@ app.MapGet("/api/clothing", async (Pr3_GordovContext context) =>
     return Results.Ok(clothes);
 });
 
-// Поиск одежды по части названия
 app.MapGet("/api/clothing/search", async (Pr3_GordovContext context, string title) =>
 {
     var clothes = await context.Clothings
@@ -150,9 +141,7 @@ app.MapGet("/api/clothing/search", async (Pr3_GordovContext context, string titl
     return Results.Ok(clothes);
 });
 
-// === ЗАКАЗЫ (Оформление и просмотр) ===
 
-// Создать новый заказ
 app.MapPost("/api/orders", async (CreateOrderDto request, ClaimsPrincipal user, Pr3_GordovContext context) =>
 {
     var userIdString = user.FindFirst("sub")?.Value;
@@ -182,6 +171,7 @@ app.MapPost("/api/orders", async (CreateOrderDto request, ClaimsPrincipal user, 
         if (size.StockQuantity < item.Quantity)
             return Results.BadRequest($"Недостаточно остатков для товара \"{size.Clothing.Title}\" ({size.LetterSize}). В наличии: {size.StockQuantity}");
 
+        
         size.StockQuantity -= item.Quantity;
         size.Clothing.PurchasesCount += item.Quantity;
 
@@ -204,7 +194,6 @@ app.MapPost("/api/orders", async (CreateOrderDto request, ClaimsPrincipal user, 
     });
 }).RequireAuthorization();
 
-// Получить список заказов с определённым статусом
 app.MapGet("/api/orders/status/{status}", async (Pr3_GordovContext context, string status) =>
 {
     var orders = await context.Orders
@@ -215,7 +204,6 @@ app.MapGet("/api/orders/status/{status}", async (Pr3_GordovContext context, stri
     return Results.Ok(orders);
 }).RequireAuthorization();
 
-// Получить список заказов определённого покупателя
 app.MapGet("/api/orders/user/{userId}", async (Pr3_GordovContext context, long userId) =>
 {
     var orders = await context.Orders
@@ -226,7 +214,6 @@ app.MapGet("/api/orders/user/{userId}", async (Pr3_GordovContext context, long u
     return Results.Ok(orders);
 }).RequireAuthorization();
 
-// Изменить статус существующего заказа (только менеджер)
 app.MapPut("/api/orders/{id}/status", async (Pr3_GordovContext context, long id, string status) =>
 {
     var order = await context.Orders.FindAsync(id);
@@ -240,9 +227,45 @@ app.MapPut("/api/orders/{id}/status", async (Pr3_GordovContext context, long id,
     return Results.Ok(order);
 }).RequireAuthorization(p => p.RequireRole("manager"));
 
+app.MapPut("/api/clothing/sizes/{id}/stock", async (Pr3_GordovContext context, long id, int quantity) =>
+{
+    var size = await context.ClothingSizes.FindAsync(id);
+    if (size == null)
+        return Results.NotFound("Размер товара не найден");
+
+    size.StockQuantity = quantity;
+    await context.SaveChangesAsync();
+
+    return Results.Ok(size);
+}).RequireAuthorization(p => p.RequireRole("manager"));
+
+app.MapPut("/api/clothing/{id}/disable", async (Pr3_GordovContext context, long id) =>
+{
+    var cloth = await context.Clothings.FindAsync(id);
+    if (cloth == null)
+        return Results.NotFound("Товар не найден");
+
+    cloth.IsAvailable = false;
+    await context.SaveChangesAsync();
+
+    return Results.Ok(cloth);
+}).RequireAuthorization(p => p.RequireRole("manager"));
+
+app.MapPut("/api/clothing/{id}/enable", async (Pr3_GordovContext context, long id) =>
+{
+    var cloth = await context.Clothings.FindAsync(id);
+    if (cloth == null)
+        return Results.NotFound("Товар не найден");
+
+    cloth.IsAvailable = true;
+    await context.SaveChangesAsync();
+
+    return Results.Ok(cloth);
+}).RequireAuthorization(p => p.RequireRole("manager"));
+
 app.Run();
 
-// === Функция создания токена ===
+
 string CreateToken(User user)
 {
     var claims = new[]
