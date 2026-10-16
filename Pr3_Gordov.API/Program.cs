@@ -58,8 +58,6 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -123,10 +121,101 @@ app.MapGet("/api/me", (ClaimsPrincipal user) =>
 {
     return Results.Ok(new
     {
+        id = user.FindFirst("sub")?.Value,
         login = user.Identity?.Name,
         role = user.FindFirst("role")?.Value
     });
 }).RequireAuthorization();
+
+// === ЗАКАЗЫ (Оформление и просмотр) ===
+
+// Создать новый заказ
+app.MapPost("/api/orders", async (CreateOrderDto request, ClaimsPrincipal user, Pr3_GordovContext context) =>
+{
+    var userIdString = user.FindFirst("sub")?.Value;
+    if (userIdString == null) return Results.Unauthorized();
+    long userId = long.Parse(userIdString);
+
+    if (request.Items == null || !request.Items.Any())
+        return Results.BadRequest("Заказ должен содержать хотя бы один товар");
+
+    var order = new Order
+    {
+        UserId = userId,
+        Status = "created",
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow
+    };
+
+    foreach (var item in request.Items)
+    {
+        var size = await context.ClothingSizes
+            .Include(s => s.Clothing)
+            .FirstOrDefaultAsync(s => s.Id == item.ClothingSizeId);
+
+        if (size == null)
+            return Results.BadRequest($"Размер с ID {item.ClothingSizeId} не найден");
+
+        if (size.StockQuantity < item.Quantity)
+            return Results.BadRequest($"Недостаточно остатков для товара \"{size.Clothing.Title}\" ({size.LetterSize}). В наличии: {size.StockQuantity}");
+
+        size.StockQuantity -= item.Quantity;
+        size.Clothing.PurchasesCount += item.Quantity;
+
+        order.OrderItems.Add(new OrderItem
+        {
+            ClothingSizeId = item.ClothingSizeId,
+            Quantity = item.Quantity,
+            UnitPrice = size.Clothing.Price
+        });
+    }
+
+    context.Orders.Add(order);
+    await context.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        orderId = order.Id,
+        status = order.Status,
+        message = "Заказ успешно оформлен"
+    });
+}).RequireAuthorization();
+
+// Получить список заказов с определённым статусом
+app.MapGet("/api/orders/status/{status}", async (Pr3_GordovContext context, string status) =>
+{
+    var orders = await context.Orders
+        .Where(o => o.Status == status)
+        .Include(o => o.OrderItems)
+        .ToListAsync();
+
+    return Results.Ok(orders);
+}).RequireAuthorization();
+
+// Получить список заказов определённого покупателя
+app.MapGet("/api/orders/user/{userId}", async (Pr3_GordovContext context, long userId) =>
+{
+    var orders = await context.Orders
+        .Where(o => o.UserId == userId)
+        .Include(o => o.OrderItems)
+        .ToListAsync();
+
+    return Results.Ok(orders);
+}).RequireAuthorization();
+
+// Изменить статус существующего заказа (только менеджер)
+app.MapPut("/api/orders/{id}/status", async (Pr3_GordovContext context, long id, string status) =>
+{
+    var order = await context.Orders.FindAsync(id);
+    if (order == null)
+        return Results.NotFound("Заказ не найден");
+
+    order.Status = status;
+    order.UpdatedAt = DateTime.UtcNow;
+    await context.SaveChangesAsync();
+
+    return Results.Ok(order);
+}).RequireAuthorization(p => p.RequireRole("manager"));
 
 app.Run();
 
@@ -144,7 +233,7 @@ string CreateToken(User user)
         issuer: "JwtDemo",
         audience: "JwtDemoApi",
         claims: claims,
-        expires: DateTime.UtcNow.AddMinutes(15),
+        expires: DateTime.UtcNow.AddMinutes(60),
         signingCredentials: new SigningCredentials(
             key, SecurityAlgorithms.HmacSha256));
 
